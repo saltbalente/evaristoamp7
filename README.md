@@ -60,7 +60,7 @@ Verifica el rendimiento en:
 
 ## 📞 Contacto
 
-WhatsApp: +1 (760) 666-2274
+WhatsApp: +1 (413) 391-2149 - https://wa.me/+14133912149?text=NECESITO%20AYUDA
 
 ## 📝 Optimizaciones
 
