@@ -997,15 +997,126 @@ section{padding:44px 0}
   const cards = Array.from(document.querySelectorAll('button[data-tarot-card]'));
   const modal = document.getElementById('tarot-consultation-modal');
   const cta = document.getElementById('selected-card-whatsapp');
-  if (cards.length !== 3 || !modal || !cta) return;
+  // Casi todas las maquetas traen tres cartas, pero alguna regeneración salió
+  // con una sola. Antes el controlador se plantaba ahí y esa página se quedaba
+  // con su comportamiento viejo: ahora se acepta de una a tres.
+  if (!cards.length || cards.length > 3 || !modal || !cta) return;
   modal.hidden = true;
   modal.setAttribute('aria-hidden', 'true');
 
+  // LAS CARTAS NO SE DESTAPAN. La persona las elige y se quedan boca abajo;
+  // quien las abre es el maestro, hablando con ella. La pagina solo recoge el
+  // MOTIVO de la consulta. Antes se giraba la carta, se cantaba el arcano y el
+  // WhatsApp salia con la lectura ya resuelta: al maestro le llegaba un encargo
+  // cerrado y no podia preguntar a que venia la persona.
+  const sello = document.createElement('style');
+  sello.textContent = '.tarot-card .tarot-card-inner{transform:none!important}'
+    + '.tarot-card .tarot-card-front{display:none!important;visibility:hidden!important}'
+    + '.tarot-card[aria-pressed="true"]{outline:2px solid currentColor;outline-offset:3px}'
+    + '.tarot-eleccion{margin:12px 0 0}'
+    + '.tarot-motivos{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 0}'
+    + '.tarot-motivo{min-height:44px;padding:8px 14px;border-radius:999px;border:1px solid currentColor;background:transparent;color:inherit;font:inherit;cursor:pointer}'
+    + '.tarot-motivo[aria-checked="true"]{box-shadow:inset 0 0 0 2px currentColor;font-weight:700}'
+    + '.tarot-pide{margin:10px 0 0;font-size:.9rem;opacity:.85}'
+    + '#selected-card-whatsapp.is-off{opacity:.45;filter:grayscale(.55)}';
+  document.head.appendChild(sello);
+
+  // La etiqueta se reescribe entera: muchas maquetas la traian cantando la carta
+  // ("Revelar carta del pasado: La Estrella"), y eso la filtraba a los lectores
+  // de pantalla aunque en pantalla ya no se vea.
+  const SITIOS = ['pasado', 'presente', 'camino'];
+  cards.forEach((card, i) => {
+    card.classList.remove('is-flipped');
+    card.removeAttribute('data-arcano');
+    // Algunas maquetas guardaban el arcano en el propio data-tarot-card. Se
+    // vacía el valor; el atributo se queda, que es por donde se encuentran.
+    card.setAttribute('data-tarot-card', '');
+    card.setAttribute('aria-pressed', 'false');
+    card.setAttribute('aria-label', cards.length === 3
+      ? 'Elegir tu carta del ' + (SITIOS[i] || 'camino') + '. Se queda boca abajo.'
+      : 'Elegir tu carta. Se queda boca abajo.');
+  });
+
+  // La maqueta heredada hablaba de «tu carta elegida» y de «este arcano».
+  // Ya no hay ninguna carta a la vista, así que ese texto mentiría. Se ajusta
+  // DENTRO del modal y en ningún otro sitio de la página.
+  const ARREGLOS = [[/tu\s+carta\s+elegida/gi, 'tu consulta'], [/la\s+carta\s+elegida/gi, 'tu consulta'], [/este\s+arcano/gi, 'tu consulta'], [/esta\s+carta/gi, 'tu consulta']];
+  const paseo = document.createTreeWalker(modal, NodeFilter.SHOW_TEXT);
+  const textos = [];
+  while (paseo.nextNode()) textos.push(paseo.currentNode);
+  textos.forEach((nodo) => {
+    let t = nodo.nodeValue;
+    ARREGLOS.forEach((par) => { t = t.replace(par[0], par[1]); });
+    if (t !== nodo.nodeValue) nodo.nodeValue = t;
+  });
+
+  const MOTIVOS = ['Amor', 'Dinero', 'Trabajo', 'Salud', 'Familia', 'Otra cosa'];
+  let motivo = '';
   let lastTrigger = null;
   let previousOverflow = '';
   const closeButtons = Array.from(modal.querySelectorAll('[data-modal-close]'));
-  const selectedLabel = modal.querySelector('[data-selected-card]');
+  const hueco = modal.querySelector('[data-selected-card]');
   const focusable = () => Array.from(modal.querySelectorAll('a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])'));
+
+  const zona = document.createElement('div');
+  zona.className = 'tarot-eleccion';
+  const titulo = document.createElement('p');
+  titulo.textContent = (cards.length === 1 ? 'Tu carta queda boca abajo.' : 'Tus ' + (cards.length === 2 ? 'dos' : 'tres') + ' cartas quedan boca abajo.')
+    + ' Las abre el maestro contigo. ¿Sobre qué quieres que te lea?';
+  const lista = document.createElement('div');
+  lista.className = 'tarot-motivos';
+  lista.setAttribute('role', 'radiogroup');
+  lista.setAttribute('aria-label', 'Motivo de la consulta');
+  const aviso = document.createElement('p');
+  aviso.className = 'tarot-pide';
+  aviso.textContent = 'Elige tu motivo para continuar.';
+
+  // El botón heredado decía «Consultar esta carta por videollamada». Ya no hay
+  // una carta que consultar: hay una persona con un motivo.
+  if (/carta/i.test(cta.textContent || '')) cta.textContent = 'Hablar con el maestro por WhatsApp';
+
+  const baseHref = cta.getAttribute('href') || 'https://wa.me/';
+  const corte = baseHref.indexOf('?');
+  const baseUrl = corte >= 0 ? baseHref.slice(0, corte) : baseHref;
+  const baseParams = corte >= 0 ? baseHref.slice(corte + 1) : '';
+  const baseText = new URLSearchParams(baseParams).get('text') || 'Deseo solicitar mi consulta inicial gratuita.';
+
+  function pintaCta() {
+    const listo = !!motivo;
+    cta.classList.toggle('is-off', !listo);
+    cta.setAttribute('aria-disabled', listo ? 'false' : 'true');
+    aviso.hidden = listo;
+    if (!listo) { cta.setAttribute('href', baseHref); return; }
+    const params = new URLSearchParams(baseParams);
+    const cuantas = cards.length === 1 ? 'mi carta' : (cards.length === 2 ? 'mis dos cartas' : 'mis tres cartas');
+    params.set('text', baseText + ' Elegí ' + cuantas + ' y las dejé sin abrir, para verlas con usted. Mi motivo es: ' + motivo + '.');
+    cta.setAttribute('href', baseUrl + '?' + params.toString());
+  }
+
+  MOTIVOS.forEach((nombre) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'tarot-motivo';
+    chip.setAttribute('role', 'radio');
+    chip.setAttribute('aria-checked', 'false');
+    chip.textContent = nombre;
+    chip.addEventListener('click', () => {
+      motivo = nombre;
+      Array.from(lista.children).forEach((otro) => otro.setAttribute('aria-checked', otro === chip ? 'true' : 'false'));
+      pintaCta();
+    });
+    lista.appendChild(chip);
+  });
+  zona.appendChild(titulo);
+  zona.appendChild(lista);
+  zona.appendChild(aviso);
+  if (hueco && hueco.parentNode) {
+    hueco.textContent = '';
+    hueco.parentNode.insertBefore(zona, hueco.nextSibling);
+  } else {
+    modal.appendChild(zona);
+  }
+  pintaCta();
 
   function closeModal() {
     modal.classList.remove('is-open');
@@ -1017,19 +1128,6 @@ section{padding:44px 0}
 
   function openModal(card) {
     lastTrigger = card;
-    card.classList.add('is-flipped');
-    const front = card.querySelector('.tarot-card-front');
-    const selectedCard = (front ? front.textContent : card.getAttribute('aria-label') || 'mi carta').trim();
-    if (selectedLabel) selectedLabel.textContent = selectedCard;
-
-    const rawHref = cta.getAttribute('href') || 'https://wa.me/';
-    const separator = rawHref.indexOf('?');
-    const base = separator >= 0 ? rawHref.slice(0, separator) : rawHref;
-    const params = new URLSearchParams(separator >= 0 ? rawHref.slice(separator + 1) : '');
-    if (!cta.dataset.baseText) cta.dataset.baseText = params.get('text') || 'Deseo solicitar mi consulta inicial gratuita.';
-    params.set('text', cta.dataset.baseText + ' Carta seleccionada: ' + selectedCard + '.');
-    cta.setAttribute('href', base + '?' + params.toString());
-
     previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     modal.hidden = false;
@@ -1039,7 +1137,19 @@ section{padding:44px 0}
     if (targets.length) targets[0].focus();
   }
 
-  cards.forEach((card) => card.addEventListener('click', () => openModal(card)));
+  cards.forEach((card) => card.addEventListener('click', () => {
+    const elegida = card.getAttribute('aria-pressed') === 'true';
+    card.setAttribute('aria-pressed', elegida ? 'false' : 'true');
+    card.classList.remove('is-flipped');
+    if (cards.filter((otra) => otra.getAttribute('aria-pressed') === 'true').length === cards.length) openModal(card);
+  }));
+
+  cta.addEventListener('click', (event) => {
+    if (motivo) return;
+    event.preventDefault();
+    lista.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  });
+
   closeButtons.forEach((button) => button.addEventListener('click', closeModal));
   modal.addEventListener('click', (event) => { if (event.target === modal) closeModal(); });
   document.addEventListener('keydown', (event) => {
